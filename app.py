@@ -4,69 +4,89 @@ import joblib
 from flask import Flask, request, jsonify, render_template
 import numpy as np
 import os
+import logging
+import logging.config
+
+# --- 1. Setup Metrics (for Prometheus/Grafana) ---
+from prometheus_flask_exporter import PrometheusMetrics
+from prometheus_client import Histogram
+
+# --- 2. Setup Logging ---
+try:
+    logging.config.fileConfig('logging.ini')
+    logger = logging.getLogger(__name__)
+    logger.info("Logging configured from file.")
+except Exception as e:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Could not load logging.ini ({e}). Using basic config.")
+
 
 app = Flask(__name__)
 
-# --- Model Loading ---
+# --- 3. Initialize Metrics ---
+metrics = PrometheusMetrics(app) # This handles all basic /metrics
+# Define custom buckets for house prices (e.g., $0 to $500k in $50k steps)
+# The library expects the raw model output (e.g., 4.5 for $450k)
+buckets = (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, float("inf"))
+PREDICTION_VALUE_HISTOGRAM = Histogram(
+    'house_price_prediction_value',
+    'Histogram of predicted house price values',
+    buckets=buckets
+)
+logger.info("Prometheus metrics endpoint initialized at /metrics")
+
+# --- 4. Model Loading ---
 MODEL_PATH = 'house_price_model.pkl'
 model = None
 
-# Load the model only if it exists
 if os.path.exists(MODEL_PATH):
-    print(f"Loading model from {MODEL_PATH}...")
+    logger.info(f"Loading model from {MODEL_PATH}...")
     model = joblib.load(MODEL_PATH)
-    print("Model loaded successfully.")
+    logger.info("Model loaded successfully.")
 else:
-    print(f"Error: Model file '{MODEL_PATH}' not found.")
-    print("Please run train_model.py first to create the model.")
-    # You might want to exit or handle this error more gracefully
-    # For this demo, we'll let it run, but /predict will fail.
+    logger.error(f"Error: Model file '{MODEL_PATH}' not found.")
+    logger.error("Please run train_model.py first to create the model.")
 
-# --- API Routes ---
+
+# --- 5. API Routes ---
 
 @app.route('/')
 def home():
     """Serves the frontend HTML page."""
-    # Renders the HTML file from the 'templates' folder
+    logger.info(f"GET / - Serving homepage (index.html)")
     return render_template('index.html')
 
 @app.route('/predict', methods=['POST'])
 def predict():
     """Handles prediction requests from the frontend."""
+    logger.info("POST /predict - Received prediction request.")
     
     if model is None:
-        # Return a 500 Internal Server Error if the model isn't loaded
+        logger.error("Prediction failed: Model is not loaded.")
         return jsonify({'error': 'Model is not loaded. Run train_model.py.'}), 500
 
     try:
-        # Get the JSON data sent from the frontend
         data = request.get_json()
-        
-        # Extract the 'features' list from the JSON payload
         features_list = data['features']
+        logger.debug(f"Received features: {features_list}") 
         
-        # Convert list of string/number inputs to a numpy array of floats
-        # Sklearn models expect a 2D array, so we reshape [1, -1]
         final_features = np.array(features_list).astype(float).reshape(1, -1)
-
-        # Make prediction
         prediction = model.predict(final_features)
+        output = prediction[0] # e.g., 4.52
 
-        # Get the single prediction value
-        output = prediction[0]
-
-        # Return the prediction as JSON
-        # The Flask server automatically sets the status code to 200 (OK)
+        # --- 6. RECORD THE METRIC ---
+        PREDICTION_VALUE_HISTOGRAM.observe(output)
+        
+        logger.info(f"Prediction successful. Output: {output}")
         return jsonify({'prediction': output})
 
     except Exception as e:
-        # Handle potential errors (e.g., bad data format)
-        print(f"Error during prediction: {e}")
-        # Return a 400 Bad Request error
+        logger.error(f"Error during prediction: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 400
 
 # --- Run the App ---
-
 if __name__ == "__main__":
-    # Setting debug=True gives helpful error messages
-    app.run(debug=True)
+    # Note: When running with gunicorn (in Docker), this part is not executed.
+    logger.info("Starting Flask development server...")
+    app.run(debug=True, port=5000) # Gunicorn will use its own port
