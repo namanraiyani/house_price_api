@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>House Price Predictor</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f4f4f4; }
+        h2 { color: #333; }
+        #predict-form { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input { width: 95%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { background: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        #result-display { margin-top: 20px; background: #e9ecef; padding: 15px; border-radius: 8px; }
+        #result-display p { margin: 5px 0; font-size: 1.1em; }
+        #result-display span { font-weight: bold; color: #0056b3; }
+    </style>
+</head>
+<body>
+
+    <h2>🏠 California House Price Prediction</h2>
+    <p>Enter the 8 features for a housing block to predict its median value.</p>
+
+    <form id="predict-form">
+        <div class="form-group"><label for="f1">MedInc (Median Income):</label><input type="number" id="f1" step="0.1" value="8.3"></div>
+        <div class="form-group"><label for="f2">HouseAge (Median House Age):</label><input type="number" id="f2" step="1" value="41"></div>
+        <div class="form-group"><label for="f3">AveRooms (Avg Rooms):</label><input type="number" id="f3" step="0.1" value="6.9"></div>
+        <div class="form-group"><label for="f4">AveBedrms (Avg Bedrooms):</label><input type="number" id="f4" step="0.1" value="1.0"></div>
+        <div class="form-group"><label for="f5">Population:</label><input type="number" id="f5" step="1" value="322"></div>
+        <div class="form-group"><label for="f6">AveOccup (Avg Occupancy):</label><input type="number" id="f6" step="0.1" value="2.5"></div>
+        <div class="form-group"><label for="f7">Latitude:</label><input type="number" id="f7" step="0.01" value="37.88"></div>
+        <div class="form-group"><label for="f8">Longitude:</label><input type="number" id="f8" step="0.01" value="-122.23"></div>
+        
+        <button type="submit" id="predict-button">Predict</button>
+    </form>
+
+    <h3>Results:</h3>
+    <div id="result-display">
+        <p>Prediction: <span id="prediction-value">---</span></p>
+        <p>Server Response Code: <span id="status-code">---</span></p>
+    </div>
+
+    <script>
+        // Get references to the HTML elements
+        const form = document.getElementById('predict-form');
+        const predictButton = document.getElementById('predict-button');
+        const predictionEl = document.getElementById('prediction-value');
+        const statusEl = document.getElementById('status-code');
+
+        // Add an event listener to the form's submit event
+        form.addEventListener('submit', function(e) {
+            // Prevent the default form submission (which reloads the page)
+            e.preventDefault();
+
+            // --- 1. REGISTER THE CLICK (as requested) ---
+            console.log("Predict button clicked!");
+            predictButton.textContent = "Predicting..."; // Give user feedback
+            predictButton.disabled = true;
+
+            // --- 2. GATHER DATA ---
+            // Collect all 8 feature values from the input fields
+            const features = [
+                document.getElementById('f1').value,
+                document.getElementById('f2').value,
+                document.getElementById('f3').value,
+                document.getElementById('f4').value,
+                document.getElementById('f5').value,
+                document.getElementById('f6').value,
+                document.getElementById('f7').value,
+                document.getElementById('f8').value
+            ];
+
+            // --- 3. SEND REQUEST TO FLASK API ---
+            fetch('/predict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 'features': features })
+            })
+            .then(response => {
+                // --- 4. DISPLAY SERVER RESPONSE CODE (as requested) ---
+                console.log("Received response from server.");
+                statusEl.textContent = response.status; // e.g., 200 or 400
+
+                if (!response.ok) {
+                    // If server returns an error code, handle it
+                    statusEl.style.color = "red";
+                    // Try to parse the error message from the server's JSON response
+                    return response.json().then(err => {
+                        throw new Error(err.error || `Server Error ${response.status}`);
+                    });
+                }
+                
+                // If response is OK (200), parse the JSON
+                statusEl.style.color = "green";
+                return response.json();
+            })
+            .then(data => {
+                // --- 5. DISPLAY PREDICTION (as requested) ---
+                if (data.prediction) {
+                    // The model predicts value in $100,000s
+                    let price = (data.prediction * 100000).toFixed(2);
+                    predictionEl.textContent = `$${price}`;
+                    predictionEl.style.color = "green";
+                } else if (data.error) {
+                    // This handles errors parsed from a non-OK response
+                    throw new Error(data.error);
+                }
+            })
+            .catch(error => {
+                // Handle fetch errors (e.g., network down) or errors thrown above
+                console.error('Error:', error);
+                predictionEl.textContent = `Error: ${error.message}`;
+                predictionEl.style.color = "red";
+                if (!statusEl.textContent || statusEl.textContent === "---") {
+                    statusEl.textContent = "Network Error";
+                    statusEl.style.color = "red";
+                }
+            })
+            .finally(() => {
+                // Re-enable the button after the request is complete
+                predictButton.textContent = "Predict";
+                predictButton.disabled = false;
+            });
+        });
+    </script>
+
+</body>
+</html>
