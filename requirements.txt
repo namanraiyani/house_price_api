@@ -1,0 +1,7 @@
+# requirements.txt
+
+flask
+joblib
+numpy
+scikit-learn
+gunicorn  
